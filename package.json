@@ -1,0 +1,17 @@
+{
+  "name": "merge-grow",
+  "version": "1.0.0",
+  "description": "Jogo estilo Suika - solte frutas e combine iguais para criar maiores",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "phaser": "^3.87.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "vite": "^6.3.0"
+  }
+}
