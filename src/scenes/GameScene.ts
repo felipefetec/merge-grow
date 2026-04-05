@@ -4,12 +4,15 @@
  * Canvas 960×1440 nativo — sem zoom de câmera.
  * Física e visual operam no mesmo espaço de coordenadas,
  * eliminando o bug de bolas passando por paredes.
+ *
+ * Suporta temas claro e escuro via ThemeManager.
  */
 
 import Phaser from 'phaser';
 import { FRUITS, SPAWN_MAX_LEVEL } from '../config/fruits';
 import { RankingManager } from '../ranking/RankingManager';
 import { soundManager } from '../audio/SoundManager';
+import { themeManager } from '../config/ThemeManager';
 
 /** Dimensões do container (escala 960×1440) */
 const CONTAINER = {
@@ -70,6 +73,9 @@ export class GameScene extends Phaser.Scene {
     // Inicializar áudio (precisa de interação do usuário — o clique em JOGAR conta)
     soundManager.inicializar();
 
+    // Aplicar cor de fundo do tema atual
+    this.cameras.main.setBackgroundColor(themeManager.cores.background);
+
     this.score = 0;
     this.canDrop = false;
     this.isGameOver = false;
@@ -97,6 +103,7 @@ export class GameScene extends Phaser.Scene {
   // ─── Container ───────────────────────────────────────────────
 
   private criarContainer(): void {
+    const c = themeManager.cores;
     const largura = CONTAINER.RIGHT - CONTAINER.LEFT;
     const W = CONTAINER.WALL_THICKNESS; // 80px — corpo físico grosso
 
@@ -131,7 +138,7 @@ export class GameScene extends Phaser.Scene {
     /** Espessura visual fina (apenas decoração) */
     const VISUAL_W = 20;
     const g = this.add.graphics();
-    g.fillStyle(0x16213e, 1);
+    g.fillStyle(c.containerWall, 1);
 
     // Chão visual
     g.fillRect(
@@ -165,31 +172,33 @@ export class GameScene extends Phaser.Scene {
   // ─── UI ──────────────────────────────────────────────────────
 
   private criarUI(): void {
+    const c = themeManager.cores;
+
     // Título estilizado com fonte Bungee
     this.add.text(480, 30, 'MERGE', {
       fontFamily: 'Bungee Shade, Bungee, Arial Black',
       fontSize: '52px',
-      color: '#ffc75f',
+      color: c.titlePrimary,
     }).setOrigin(0.5, 0);
 
     this.add.text(480, 85, '& GROW', {
       fontFamily: 'Bungee, Arial Black',
       fontSize: '28px',
-      color: '#4b7bec',
+      color: c.titleSecondary,
     }).setOrigin(0.5, 0);
 
     // Pontuação
     this.scoreText = this.add.text(480, 130, 'Pontos: 0', {
       fontFamily: 'Arial',
       fontSize: '32px',
-      color: '#ffffff',
+      color: c.textPrimary,
     }).setOrigin(0.5);
 
     // Próxima bola
     this.add.text(870, 30, 'Próxima:', {
       fontFamily: 'Arial',
       fontSize: '22px',
-      color: '#aaaaaa',
+      color: c.textSecondary,
     }).setOrigin(0.5);
 
     this.nextFruitPreview = this.add.circle(870, 80, 20, 0xffffff);
@@ -202,11 +211,11 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(1);
 
     // Botão SAIR — padding grande para toque fácil em mobile
-    const botaoDesistir = this.add.text(75, 90, 'SAIR', {
+    const botaoDesistir = this.add.text(75, 50, 'SAIR', {
       fontFamily: 'Arial Black, Arial',
       fontSize: '26px',
       color: '#ff4757',
-      backgroundColor: '#16213e',
+      backgroundColor: c.uiBackground,
       padding: { x: 28, y: 18 },
     }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
 
@@ -219,11 +228,11 @@ export class GameScene extends Phaser.Scene {
       }
     });
 
-    // Botão de som — ao lado do SAIR, alterna mudo/ligado
-    const icone = soundManager.mutado ? '🔇' : '🔊';
-    const botaoSom = this.add.text(75, 160, icone, {
+    // Botão de som — alterna mudo/ligado
+    const iconeSom = soundManager.mutado ? '🔇' : '🔊';
+    const botaoSom = this.add.text(75, 120, iconeSom, {
       fontSize: '40px',
-      backgroundColor: '#16213e',
+      backgroundColor: c.uiBackground,
       padding: { x: 18, y: 10 },
     }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
 
@@ -231,6 +240,21 @@ export class GameScene extends Phaser.Scene {
       const mutado = soundManager.toggleMudo();
       botaoSom.setText(mutado ? '🔇' : '🔊');
       if (!mutado) soundManager.tocarClick();
+    });
+
+    // Botão de tema — alterna entre claro e escuro
+    const iconeTema = themeManager.escuro ? '🌙' : '☀️';
+    const botaoTema = this.add.text(75, 190, iconeTema, {
+      fontSize: '40px',
+      backgroundColor: c.uiBackground,
+      padding: { x: 18, y: 10 },
+    }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
+
+    botaoTema.on('pointerdown', () => {
+      soundManager.tocarClick();
+      themeManager.alternar();
+      // Reiniciar a cena para aplicar o novo tema
+      this.scene.restart();
     });
   }
 
@@ -699,6 +723,7 @@ export class GameScene extends Phaser.Scene {
   // ─── Game Over ───────────────────────────────────────────────
 
   private gameOver(): void {
+    const c = themeManager.cores;
     this.isGameOver = true;
     soundManager.tocarGameOver();
 
@@ -707,7 +732,7 @@ export class GameScene extends Phaser.Scene {
     this.previewText?.destroy();
     this.previewText = null;
 
-    const overlay = this.add.rectangle(480, 720, 960, 1440, 0x000000, 0.7);
+    const overlay = this.add.rectangle(480, 720, 960, 1440, c.gameOverOverlay, c.gameOverOverlayAlpha);
     overlay.setDepth(10);
 
     this.add.text(480, 400, 'FIM DE JOGO', {
@@ -719,13 +744,13 @@ export class GameScene extends Phaser.Scene {
     this.add.text(480, 500, `Pontuação: ${this.score}`, {
       fontFamily: 'Arial',
       fontSize: '44px',
-      color: '#ffffff',
+      color: c.textPrimary,
     }).setOrigin(0.5).setDepth(11);
 
     this.add.text(480, 590, 'Seu apelido (máx. 10 letras):', {
       fontFamily: 'Arial',
       fontSize: '26px',
-      color: '#aaaaaa',
+      color: c.textSecondary,
     }).setOrigin(0.5).setDepth(11);
 
     /**
@@ -748,9 +773,9 @@ export class GameScene extends Phaser.Scene {
       padding: 14px 20px;
       font-family: 'Arial Black', Arial, sans-serif;
       font-size: 24px;
-      color: #ffc75f;
-      background: #16213e;
-      border: 3px solid #ffc75f;
+      color: ${c.inputText};
+      background: ${c.inputBackground};
+      border: 3px solid ${c.inputBorder};
       border-radius: 12px;
       text-align: center;
       outline: none;
@@ -765,8 +790,8 @@ export class GameScene extends Phaser.Scene {
     const textoApelido = this.add.text(480, 700, '|', {
       fontFamily: 'Arial Black, Arial',
       fontSize: '48px',
-      color: '#ffc75f',
-      backgroundColor: '#16213e',
+      color: c.inputText,
+      backgroundColor: c.inputBackground,
       padding: { x: 30, y: 12 },
     }).setOrigin(0.5).setDepth(11);
 
@@ -775,7 +800,7 @@ export class GameScene extends Phaser.Scene {
       fontFamily: 'Bungee, Arial Black',
       fontSize: '36px',
       color: '#2ed573',
-      backgroundColor: '#16213e',
+      backgroundColor: c.uiBackground,
       padding: { x: 40, y: 16 },
     }).setOrigin(0.5).setDepth(11).setInteractive({ useHandCursor: true });
 

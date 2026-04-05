@@ -4,11 +4,14 @@
  * Exibe top 10 com medalhas para os 3 primeiros.
  * Se o jogador acabou de entrar no pódio (top 3),
  * lança confetes/serpentinas e toca música de vitória.
+ *
+ * Inclui botões de tema (claro/escuro) e som na parte superior.
  */
 
 import Phaser from 'phaser';
 import { RankingManager, type RankingEntry } from '../ranking/RankingManager';
 import { soundManager } from '../audio/SoundManager';
+import { themeManager } from '../config/ThemeManager';
 
 export class RankingScene extends Phaser.Scene {
   constructor() {
@@ -16,36 +19,40 @@ export class RankingScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.cameras.main.setBackgroundColor('#1a1a2e');
+    const c = themeManager.cores;
+
+    // Aplicar cor de fundo do tema atual
+    this.cameras.main.setBackgroundColor(c.background);
 
     // Título estilizado
     this.add.text(480, 50, 'MERGE', {
       fontFamily: 'Bungee Shade, Bungee, Arial Black',
       fontSize: '72px',
-      color: '#ffc75f',
+      color: c.titlePrimary,
     }).setOrigin(0.5, 0);
 
     this.add.text(480, 135, '& GROW', {
       fontFamily: 'Bungee, Arial Black',
       fontSize: '40px',
-      color: '#4b7bec',
+      color: c.titleSecondary,
     }).setOrigin(0.5, 0);
 
     this.add.text(480, 200, 'Junte bolas de mesmo peso!', {
       fontFamily: 'Arial',
       fontSize: '28px',
-      color: '#888888',
+      color: c.textTertiary,
     }).setOrigin(0.5);
 
     this.add.text(480, 280, 'RANKING', {
       fontFamily: 'Bungee, Arial Black',
       fontSize: '40px',
-      color: '#ffc75f',
+      color: c.titlePrimary,
     }).setOrigin(0.5);
 
     const ranking = RankingManager.carregarRanking();
     this.exibirRanking(ranking);
     this.criarBotaoJogar();
+    this.criarBotoesUI();
 
     // Verificar se o jogador acabou de entrar no pódio (top 3)
     const posicao: number = this.registry.get('ultimaPosicaoRanking') ?? -1;
@@ -56,7 +63,46 @@ export class RankingScene extends Phaser.Scene {
     this.registry.set('ultimaPosicaoRanking', -1);
   }
 
+  /**
+   * Cria os botões de tema e som no canto superior esquerdo.
+   * Ambos ficam visíveis na tela inicial para fácil acesso.
+   */
+  private criarBotoesUI(): void {
+    const c = themeManager.cores;
+
+    // Botão de tema — alterna entre claro e escuro
+    const iconeTema = themeManager.escuro ? '🌙' : '☀️';
+    const botaoTema = this.add.text(75, 50, iconeTema, {
+      fontSize: '40px',
+      backgroundColor: c.uiBackground,
+      padding: { x: 18, y: 10 },
+    }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
+
+    botaoTema.on('pointerdown', () => {
+      soundManager.tocarClick();
+      themeManager.alternar();
+      // Reiniciar a cena para aplicar o novo tema em todos os elementos
+      this.scene.restart();
+    });
+
+    // Botão de som — alterna mudo/ligado
+    const iconeSom = soundManager.mutado ? '🔇' : '🔊';
+    const botaoSom = this.add.text(75, 120, iconeSom, {
+      fontSize: '40px',
+      backgroundColor: c.uiBackground,
+      padding: { x: 18, y: 10 },
+    }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
+
+    botaoSom.on('pointerdown', () => {
+      soundManager.inicializar();
+      const mutado = soundManager.toggleMudo();
+      botaoSom.setText(mutado ? '🔇' : '🔊');
+      if (!mutado) soundManager.tocarClick();
+    });
+  }
+
   private exibirRanking(ranking: RankingEntry[]): void {
+    const c = themeManager.cores;
     const inicioY = 350;
     const espacamento = 60;
 
@@ -64,24 +110,24 @@ export class RankingScene extends Phaser.Scene {
       this.add.text(480, inicioY + 140, 'Nenhuma pontuação registrada.\nSeja o primeiro!', {
         fontFamily: 'Arial',
         fontSize: '30px',
-        color: '#666666',
+        color: c.textTertiary,
         align: 'center',
       }).setOrigin(0.5);
       return;
     }
 
     this.add.text(155, inicioY, '#', {
-      fontFamily: 'Arial Black', fontSize: '26px', color: '#666666',
+      fontFamily: 'Arial Black', fontSize: '26px', color: c.textTertiary,
     });
     this.add.text(230, inicioY, 'JOGADOR', {
-      fontFamily: 'Arial Black', fontSize: '26px', color: '#666666',
+      fontFamily: 'Arial Black', fontSize: '26px', color: c.textTertiary,
     });
     this.add.text(700, inicioY, 'PONTOS', {
-      fontFamily: 'Arial Black', fontSize: '26px', color: '#666666',
+      fontFamily: 'Arial Black', fontSize: '26px', color: c.textTertiary,
     });
 
     const sep = this.add.graphics();
-    sep.lineStyle(2, 0x333333);
+    sep.lineStyle(2, c.separator);
     sep.moveTo(130, inicioY + 40);
     sep.lineTo(830, inicioY + 40);
     sep.strokePath();
@@ -91,8 +137,8 @@ export class RankingScene extends Phaser.Scene {
 
     ranking.forEach((entrada, i) => {
       const y = inicioY + 55 + i * espacamento;
-      const cor = i < 3 ? coresPosicao[i] : '#ffffff';
-      const corPontos = i < 3 ? coresPosicao[i] : '#aaaaaa';
+      const cor = i < 3 ? coresPosicao[i] : c.textPrimary;
+      const corPontos = i < 3 ? coresPosicao[i] : c.textSecondary;
 
       if (i < 3) {
         this.add.text(115, y, medalhas[i], {
@@ -119,11 +165,13 @@ export class RankingScene extends Phaser.Scene {
   }
 
   private criarBotaoJogar(): void {
+    const c = themeManager.cores;
+
     const botao = this.add.text(480, 1250, 'JOGAR', {
       fontFamily: 'Bungee, Arial Black',
       fontSize: '52px',
       color: '#2ed573',
-      backgroundColor: '#16213e',
+      backgroundColor: c.uiBackground,
       padding: { x: 60, y: 20 },
     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 

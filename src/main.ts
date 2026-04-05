@@ -9,6 +9,7 @@
 import Phaser from 'phaser';
 import { RankingScene } from './scenes/RankingScene';
 import { GameScene } from './scenes/GameScene';
+import { themeManager } from './config/ThemeManager';
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -42,7 +43,7 @@ const config: Phaser.Types.Core.GameConfig = {
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
 
-  backgroundColor: '#1a1a2e',
+  backgroundColor: themeManager.cores.background,
   scene: [RankingScene, GameScene],
 };
 
