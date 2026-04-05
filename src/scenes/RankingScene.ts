@@ -133,7 +133,7 @@ export class RankingScene extends Phaser.Scene {
     sep.strokePath();
 
     const medalhas = ['🥇', '🥈', '🥉'];
-    const coresPosicao = ['#ffc75f', '#c0c0c0', '#cd7f32'];
+    const coresPosicao = c.medalColors;
 
     ranking.forEach((entrada, i) => {
       const y = inicioY + 55 + i * espacamento;

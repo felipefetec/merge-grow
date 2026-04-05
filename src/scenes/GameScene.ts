@@ -6,6 +6,7 @@
  * eliminando o bug de bolas passando por paredes.
  *
  * Suporta temas claro e escuro via ThemeManager.
+ * A troca de tema é dinâmica — não reinicia a cena.
  */
 
 import Phaser from 'phaser';
@@ -64,6 +65,15 @@ export class GameScene extends Phaser.Scene {
 
   /** Mínimo de merges na janela para "SUPER Combo" */
   private static readonly SUPER_COMBO_MIN = 5;
+
+  // ─── Referências para atualização dinâmica de tema ───────────
+  private titleMerge!: Phaser.GameObjects.Text;
+  private titleGrow!: Phaser.GameObjects.Text;
+  private proximaLabel!: Phaser.GameObjects.Text;
+  private botaoDesistir!: Phaser.GameObjects.Text;
+  private botaoSom!: Phaser.GameObjects.Text;
+  private botaoTema!: Phaser.GameObjects.Text;
+  private containerGraphics!: Phaser.GameObjects.Graphics;
 
   constructor() {
     super({ key: 'GameScene' });
@@ -135,24 +145,36 @@ export class GameScene extends Phaser.Scene {
       { isStatic: true, label: 'paredeDireita' }
     );
 
-    /** Espessura visual fina (apenas decoração) */
+    // Paredes visuais — graphics separado para poder redesenhar no tema
+    this.containerGraphics = this.add.graphics();
+    this.desenharParedesVisuais();
+  }
+
+  /**
+   * Desenha as paredes visuais do container com a cor do tema atual.
+   * Separado para poder ser chamado novamente ao trocar de tema.
+   */
+  private desenharParedesVisuais(): void {
+    const c = themeManager.cores;
+    const largura = CONTAINER.RIGHT - CONTAINER.LEFT;
     const VISUAL_W = 20;
-    const g = this.add.graphics();
-    g.fillStyle(c.containerWall, 1);
+
+    this.containerGraphics.clear();
+    this.containerGraphics.fillStyle(c.containerWall, 1);
 
     // Chão visual
-    g.fillRect(
+    this.containerGraphics.fillRect(
       CONTAINER.LEFT - VISUAL_W, CONTAINER.BOTTOM,
       largura + VISUAL_W * 2, VISUAL_W
     );
     // Parede esquerda visual
-    g.fillRect(
+    this.containerGraphics.fillRect(
       CONTAINER.LEFT - VISUAL_W, CONTAINER.DANGER_LINE - 40,
       VISUAL_W,
       CONTAINER.BOTTOM - CONTAINER.DANGER_LINE + 40 + VISUAL_W
     );
     // Parede direita visual
-    g.fillRect(
+    this.containerGraphics.fillRect(
       CONTAINER.RIGHT, CONTAINER.DANGER_LINE - 40,
       VISUAL_W,
       CONTAINER.BOTTOM - CONTAINER.DANGER_LINE + 40 + VISUAL_W
@@ -175,13 +197,13 @@ export class GameScene extends Phaser.Scene {
     const c = themeManager.cores;
 
     // Título estilizado com fonte Bungee
-    this.add.text(480, 30, 'MERGE', {
+    this.titleMerge = this.add.text(480, 30, 'MERGE', {
       fontFamily: 'Bungee Shade, Bungee, Arial Black',
       fontSize: '52px',
       color: c.titlePrimary,
     }).setOrigin(0.5, 0);
 
-    this.add.text(480, 85, '& GROW', {
+    this.titleGrow = this.add.text(480, 85, '& GROW', {
       fontFamily: 'Bungee, Arial Black',
       fontSize: '28px',
       color: c.titleSecondary,
@@ -195,7 +217,7 @@ export class GameScene extends Phaser.Scene {
     }).setOrigin(0.5);
 
     // Próxima bola
-    this.add.text(870, 30, 'Próxima:', {
+    this.proximaLabel = this.add.text(870, 30, 'Próxima:', {
       fontFamily: 'Arial',
       fontSize: '22px',
       color: c.textSecondary,
@@ -205,13 +227,13 @@ export class GameScene extends Phaser.Scene {
     this.nextFruitPreviewText = this.add.text(870, 80, '', {
       fontFamily: 'Arial Black, Arial',
       fontSize: '14px',
-      color: '#ffffff',
-      stroke: '#000000',
+      color: c.ballTextColor,
+      stroke: c.ballTextStroke,
       strokeThickness: 2,
     }).setOrigin(0.5).setDepth(1);
 
     // Botão SAIR — padding grande para toque fácil em mobile
-    const botaoDesistir = this.add.text(75, 50, 'SAIR', {
+    this.botaoDesistir = this.add.text(75, 50, 'SAIR', {
       fontFamily: 'Arial Black, Arial',
       fontSize: '26px',
       color: '#ff4757',
@@ -219,9 +241,9 @@ export class GameScene extends Phaser.Scene {
       padding: { x: 28, y: 18 },
     }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
 
-    botaoDesistir.on('pointerover', () => botaoDesistir.setStyle({ color: '#ff6b81' }));
-    botaoDesistir.on('pointerout', () => botaoDesistir.setStyle({ color: '#ff4757' }));
-    botaoDesistir.on('pointerdown', () => {
+    this.botaoDesistir.on('pointerover', () => this.botaoDesistir.setStyle({ color: '#ff6b81' }));
+    this.botaoDesistir.on('pointerout', () => this.botaoDesistir.setStyle({ color: '#ff4757' }));
+    this.botaoDesistir.on('pointerdown', () => {
       if (!this.isGameOver) {
         soundManager.tocarClick();
         this.gameOver();
@@ -230,35 +252,91 @@ export class GameScene extends Phaser.Scene {
 
     // Botão de som — alterna mudo/ligado
     const iconeSom = soundManager.mutado ? '🔇' : '🔊';
-    const botaoSom = this.add.text(75, 120, iconeSom, {
+    this.botaoSom = this.add.text(75, 120, iconeSom, {
       fontSize: '40px',
       backgroundColor: c.uiBackground,
       padding: { x: 18, y: 10 },
     }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
 
-    botaoSom.on('pointerdown', () => {
+    this.botaoSom.on('pointerdown', () => {
       const mutado = soundManager.toggleMudo();
-      botaoSom.setText(mutado ? '🔇' : '🔊');
+      this.botaoSom.setText(mutado ? '🔇' : '🔊');
       if (!mutado) soundManager.tocarClick();
     });
 
     // Botão de tema — alterna entre claro e escuro
     const iconeTema = themeManager.escuro ? '🌙' : '☀️';
-    const botaoTema = this.add.text(75, 190, iconeTema, {
+    this.botaoTema = this.add.text(75, 190, iconeTema, {
       fontSize: '40px',
       backgroundColor: c.uiBackground,
       padding: { x: 18, y: 10 },
     }).setOrigin(0.5).setDepth(5).setInteractive({ useHandCursor: true });
 
-    botaoTema.on('pointerdown', () => {
+    this.botaoTema.on('pointerdown', () => {
       soundManager.tocarClick();
       themeManager.alternar();
-      // Reiniciar a cena para aplicar o novo tema
-      this.scene.restart();
+      // Aplicar tema dinamicamente sem reiniciar a cena
+      this.aplicarTema();
+    });
+  }
+
+  /**
+   * Aplica o tema atual em todos os elementos visuais da cena
+   * sem reiniciar — preserva o estado do jogo (bolas, pontuação, etc).
+   */
+  private aplicarTema(): void {
+    const c = themeManager.cores;
+
+    // Fundo da câmera
+    this.cameras.main.setBackgroundColor(c.background);
+
+    // Paredes visuais do container
+    this.desenharParedesVisuais();
+
+    // Títulos
+    this.titleMerge.setStyle({ color: c.titlePrimary });
+    this.titleGrow.setStyle({ color: c.titleSecondary });
+
+    // Pontuação
+    this.scoreText.setStyle({ color: c.textPrimary });
+
+    // Label "Próxima:"
+    this.proximaLabel.setStyle({ color: c.textSecondary });
+
+    // Texto do preview da próxima bola
+    this.nextFruitPreviewText.setStyle({
+      color: c.ballTextColor,
+      stroke: c.ballTextStroke,
+    });
+
+    // Botões — atualizar fundo e ícone do tema
+    this.botaoDesistir.setStyle({ backgroundColor: c.uiBackground });
+    this.botaoSom.setStyle({ backgroundColor: c.uiBackground });
+    this.botaoTema.setStyle({ backgroundColor: c.uiBackground });
+    this.botaoTema.setText(themeManager.escuro ? '🌙' : '☀️');
+
+    // Texto de preview da bola atual (se existir)
+    if (this.previewText) {
+      this.previewText.setStyle({
+        color: c.ballTextColor,
+        stroke: c.ballTextStroke,
+      });
+    }
+
+    // Atualizar cor do texto de peso de todas as bolas em jogo
+    this.fruitBodies.forEach((bola) => {
+      const texto = bola.getData('textoPeso') as Phaser.GameObjects.Text;
+      if (texto) {
+        texto.setStyle({
+          color: c.ballTextColor,
+          stroke: c.ballTextStroke,
+        });
+      }
     });
   }
 
   private atualizarPreviewProximaBola(): void {
+    const c = themeManager.cores;
     const cfg = FRUITS[this.nextNextFruitLevel];
     const raioPreview = Math.min(cfg.radius * 0.5, 34);
 
@@ -270,8 +348,8 @@ export class GameScene extends Phaser.Scene {
     this.nextFruitPreviewText = this.add.text(870, 80, cfg.name, {
       fontFamily: 'Arial Black, Arial',
       fontSize: `${Math.max(12, raioPreview * 0.6)}px`,
-      color: '#ffffff',
-      stroke: '#000000',
+      color: c.ballTextColor,
+      stroke: c.ballTextStroke,
       strokeThickness: 2,
     }).setOrigin(0.5).setDepth(1);
   }
@@ -283,6 +361,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private criarPreviewBola(): void {
+    const c = themeManager.cores;
     const cfg = FRUITS[this.nextFruitLevel];
 
     this.previewFruit = this.add.circle(480, DROP_Y, cfg.radius, cfg.color, 0.6);
@@ -291,8 +370,8 @@ export class GameScene extends Phaser.Scene {
     this.previewText = this.add.text(480, DROP_Y, cfg.name, {
       fontFamily: 'Arial Black, Arial',
       fontSize: `${Math.max(18, cfg.radius * 0.4)}px`,
-      color: '#ffffff',
-      stroke: '#000000',
+      color: c.ballTextColor,
+      stroke: c.ballTextStroke,
       strokeThickness: 3,
     }).setOrigin(0.5).setDepth(1);
     this.previewText.setAlpha(0.6);
@@ -356,6 +435,7 @@ export class GameScene extends Phaser.Scene {
   // ─── Bolas com Física ────────────────────────────────────────
 
   private criarBolaFisica(x: number, y: number, nivel: number): Phaser.GameObjects.Arc {
+    const c = themeManager.cores;
     const cfg = FRUITS[nivel];
 
     const bola = this.add.circle(x, y, cfg.radius, cfg.color);
@@ -364,8 +444,8 @@ export class GameScene extends Phaser.Scene {
     const textoPeso = this.add.text(x, y, cfg.name, {
       fontFamily: 'Arial Black, Arial',
       fontSize: `${Math.max(18, cfg.radius * 0.4)}px`,
-      color: '#ffffff',
-      stroke: '#000000',
+      color: c.ballTextColor,
+      stroke: c.ballTextStroke,
       strokeThickness: 3,
     }).setOrigin(0.5).setDepth(1);
 

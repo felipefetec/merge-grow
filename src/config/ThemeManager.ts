@@ -27,8 +27,14 @@ export interface ThemeColors {
   textSecondary: string;
   /** Cor do texto terciário (cabeçalhos de tabela, dicas) */
   textTertiary: string;
+  /** Cor do texto de peso dentro das bolas */
+  ballTextColor: string;
+  /** Cor do stroke do texto de peso dentro das bolas */
+  ballTextStroke: string;
   /** Cor do separador no ranking */
   separator: number;
+  /** Cores do pódio no ranking (1°, 2°, 3°) */
+  medalColors: [string, string, string];
   /** Cor do overlay de game over (com alpha) */
   gameOverOverlay: number;
   /** Alpha do overlay de game over */
@@ -52,7 +58,10 @@ const DARK_THEME: ThemeColors = {
   textPrimary: '#ffffff',
   textSecondary: '#aaaaaa',
   textTertiary: '#666666',
+  ballTextColor: '#ffffff',
+  ballTextStroke: '#000000',
   separator: 0x333333,
+  medalColors: ['#ffc75f', '#c0c0c0', '#cd7f32'],
   gameOverOverlay: 0x000000,
   gameOverOverlayAlpha: 0.7,
   inputBorder: '#ffc75f',
@@ -71,7 +80,11 @@ const LIGHT_THEME: ThemeColors = {
   textPrimary: '#212121',
   textSecondary: '#555555',
   textTertiary: '#888888',
+  ballTextColor: '#000000',
+  ballTextStroke: '#ffffff',
   separator: 0xcccccc,
+  /** 1° e 2° mais escuros para boa leitura no fundo claro */
+  medalColors: ['#b8860b', '#808080', '#8b5e3c'],
   gameOverOverlay: 0xffffff,
   gameOverOverlayAlpha: 0.75,
   inputBorder: '#d4a017',
