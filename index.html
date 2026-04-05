@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Merge & Grow</title>
+  <!-- Fonte Bungee para o título do jogo — pesada e moderna, remete a "peso" -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Bungee+Shade&display=swap" rel="stylesheet" />
+  <style>
+    /* Reset e fundo escuro para o jogo */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0f0f23;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      /* Desabilitar seleção de texto durante o jogo */
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    #game-container {
+      /* O Phaser vai preencher este container */
+    }
+  </style>
+  <script type="module" crossorigin src="/merge-grow/assets/index-CD9vG4IK.js"></script>
+</head>
+<body>
+  <div id="game-container"></div>
+</body>
+</html>
