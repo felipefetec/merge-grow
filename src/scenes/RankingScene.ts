@@ -182,6 +182,19 @@ export class RankingScene extends Phaser.Scene {
       soundManager.tocarClick();
       this.scene.start('GameScene');
     });
+
+    // Créditos do desenvolvedor
+    this.add.text(480, 1340, 'Criado por Felipe Tavares (felipefetec) — 2025', {
+      fontFamily: 'Arial',
+      fontSize: '20px',
+      color: c.textTertiary,
+    }).setOrigin(0.5);
+
+    this.add.text(480, 1370, 'Feito com Phaser 3 + TypeScript | Publicado na GitHub Pages', {
+      fontFamily: 'Arial',
+      fontSize: '16px',
+      color: c.textTertiary,
+    }).setOrigin(0.5);
   }
 
   /**
