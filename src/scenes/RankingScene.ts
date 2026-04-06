@@ -14,6 +14,9 @@ import { soundManager } from '../audio/SoundManager';
 import { themeManager } from '../config/ThemeManager';
 
 export class RankingScene extends Phaser.Scene {
+  // Array para armazenar apenas os objetos do ranking (para limpar sem afetar UI)
+  private rankingObjects: Phaser.GameObjects.GameObject[] = [];
+
   constructor() {
     super({ key: 'RankingScene' });
   }
@@ -49,11 +52,10 @@ export class RankingScene extends Phaser.Scene {
       color: c.titlePrimary,
     }).setOrigin(0.5);
 
-    // --- Carregamento do ranking ---
-    // Substitui a chamada síncrona anterior por uma que aguarda os dados
-    // e também registra um listener para atualizações futuras.
+    // Inicia carregamento do ranking (assíncrono) e registra listener
     this.iniciarCarregamentoRanking();
 
+    // Cria botões e elementos que NÃO devem ser destruídos ao atualizar ranking
     this.criarBotaoJogar();
     this.criarBotoesUI();
 
@@ -148,52 +150,57 @@ export class RankingScene extends Phaser.Scene {
     });
   }
 
+  /**
+   * Exibe o ranking. Agora usamos this.rankingObjects para controlar
+   * apenas os objetos criados aqui, evitando destruir botões e créditos.
+   */
   private exibirRanking(ranking: RankingEntry[]): void {
     const c = themeManager.cores;
     const inicioY = 350;
     const espacamento = 60;
 
-    // Limpa elementos antigos de ranking antes de desenhar (evita duplicação)
-    // Observação: se você tiver um container específico para o ranking, limpe-o em vez de tudo.
-    // Aqui fazemos uma limpeza simples procurando textos que contenham '°' ou nomes/pontos.
-    // Para simplicidade e segurança, vamos destruir todos os children criados após a posição do título 'RANKING'.
-    // Se preferir controle mais fino, adapte conforme sua estrutura de cena.
-    // (Não destruímos botões UI nem título)
-    this.children.list.forEach((child) => {
-      // tenta identificar objetos de texto que pertencem ao ranking pela posição Y
-      if (child instanceof Phaser.GameObjects.Text) {
-        const ty = (child as Phaser.GameObjects.Text).y;
-        if (ty >= inicioY - 10) {
-          child.destroy();
+    // Destrói apenas os objetos do ranking (se existirem)
+    if (this.rankingObjects.length > 0) {
+      for (const obj of this.rankingObjects) {
+        try {
+          obj.destroy();
+        } catch (e) {
+          // ignora erros de destruição
         }
       }
-    });
+      this.rankingObjects = [];
+    }
 
+    // Se não houver ranking, mostra mensagem
     if (!ranking || ranking.length === 0) {
-      this.add.text(480, inicioY + 140, 'Nenhuma pontuação registrada.\nSeja o primeiro!', {
+      const msg = this.add.text(480, inicioY + 140, 'Nenhuma pontuação registrada.\nSeja o primeiro!', {
         fontFamily: 'Arial',
         fontSize: '30px',
         color: c.textTertiary,
         align: 'center',
       }).setOrigin(0.5);
+      this.rankingObjects.push(msg);
       return;
     }
 
-    this.add.text(155, inicioY, '#', {
+    // Cabeçalhos
+    const h1 = this.add.text(155, inicioY, '#', {
       fontFamily: 'Arial Black', fontSize: '26px', color: c.textTertiary,
     });
-    this.add.text(230, inicioY, 'JOGADOR', {
+    const h2 = this.add.text(230, inicioY, 'JOGADOR', {
       fontFamily: 'Arial Black', fontSize: '26px', color: c.textTertiary,
     });
-    this.add.text(700, inicioY, 'PONTOS', {
+    const h3 = this.add.text(700, inicioY, 'PONTOS', {
       fontFamily: 'Arial Black', fontSize: '26px', color: c.textTertiary,
     });
+    this.rankingObjects.push(h1, h2, h3);
 
     const sep = this.add.graphics();
     sep.lineStyle(2, c.separator);
     sep.moveTo(130, inicioY + 40);
     sep.lineTo(830, inicioY + 40);
     sep.strokePath();
+    this.rankingObjects.push(sep);
 
     const medalhas = ['🥇', '🥈', '🥉'];
     const coresPosicao = c.medalColors;
@@ -204,26 +211,27 @@ export class RankingScene extends Phaser.Scene {
       const corPontos = i < 3 ? coresPosicao[i] : c.textSecondary;
 
       if (i < 3) {
-        this.add.text(115, y, medalhas[i], {
-          fontSize: '32px',
-        }).setOrigin(0, 0.5);
-
-        this.add.text(165, y, `${i + 1}°`, {
+        const m = this.add.text(115, y, medalhas[i], { fontSize: '32px' }).setOrigin(0, 0.5);
+        const pos = this.add.text(165, y, `${i + 1}°`, {
           fontFamily: 'Arial Black', fontSize: '28px', color: cor,
         }).setOrigin(0.5);
+        this.rankingObjects.push(m, pos);
       } else {
-        this.add.text(165, y, `${i + 1}°`, {
+        const pos = this.add.text(165, y, `${i + 1}°`, {
           fontFamily: 'Arial Black', fontSize: '28px', color: cor,
         }).setOrigin(0.5);
+        this.rankingObjects.push(pos);
       }
 
-      this.add.text(230, y, entrada.nome, {
+      const nomeTxt = this.add.text(230, y, entrada.nome, {
         fontFamily: 'Arial', fontSize: '28px', color: cor,
       }).setOrigin(0, 0.5);
 
-      this.add.text(700, y, `${entrada.pontos}`, {
+      const pontosTxt = this.add.text(700, y, `${entrada.pontos}`, {
         fontFamily: 'Arial Black', fontSize: '28px', color: corPontos,
       }).setOrigin(0, 0.5);
+
+      this.rankingObjects.push(nomeTxt, pontosTxt);
     });
   }
 
@@ -246,7 +254,7 @@ export class RankingScene extends Phaser.Scene {
       this.scene.start('GameScene');
     });
 
-    // Créditos do desenvolvedor
+    // Créditos do desenvolvedor (mantidos fora do rankingObjects)
     this.add.text(480, 1340, 'Criado por Felipe Tavares (felipefetec) — 2025', {
       fontFamily: 'Arial',
       fontSize: '20px',
