@@ -49,8 +49,11 @@ export class RankingScene extends Phaser.Scene {
       color: c.titlePrimary,
     }).setOrigin(0.5);
 
-    const ranking = RankingManager.carregarRanking();
-    this.exibirRanking(ranking);
+    // --- Carregamento do ranking ---
+    // Substitui a chamada síncrona anterior por uma que aguarda os dados
+    // e também registra um listener para atualizações futuras.
+    this.iniciarCarregamentoRanking();
+
     this.criarBotaoJogar();
     this.criarBotoesUI();
 
@@ -61,6 +64,50 @@ export class RankingScene extends Phaser.Scene {
     }
     // Limpar para não repetir na próxima vez que abrir o ranking
     this.registry.set('ultimaPosicaoRanking', -1);
+  }
+
+  /**
+   * Inicia o carregamento do ranking de forma assíncrona e registra listener
+   * para atualizações futuras (evento global 'rankingUpdated').
+   */
+  private iniciarCarregamentoRanking(): void {
+    // 1) Carrega inicialmente aguardando a resposta
+    RankingManager.carregarRankingAsync(10)
+      .then((ranking) => {
+        console.log('[RankingScene] carregarRankingAsync result:', ranking);
+        this.exibirRanking(ranking);
+      })
+      .catch((err) => {
+        console.error('[RankingScene] Erro carregarRankingAsync:', err);
+        // fallback: renderiza cache atual (pode estar vazio)
+        try {
+          this.exibirRanking(RankingManager.carregarRanking());
+        } catch (e) {
+          console.error('[RankingScene] Erro no fallback exibirRanking:', e);
+        }
+      });
+
+    // 2) Registra listener para atualizações futuras (evento global)
+    const onUpdate = (ev: Event) => {
+      try {
+        const detail = (ev as CustomEvent).detail as RankingEntry[];
+        console.log('[RankingScene] rankingUpdated event recebido:', detail);
+        this.exibirRanking(detail);
+      } catch (e) {
+        console.error('[RankingScene] Erro ao processar rankingUpdated event:', e);
+      }
+    };
+
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('rankingUpdated', onUpdate as EventListener);
+    }
+
+    // Remove listener quando a cena for destruída
+    this.events.on('shutdown', () => {
+      if (typeof window !== 'undefined' && window.removeEventListener) {
+        window.removeEventListener('rankingUpdated', onUpdate as EventListener);
+      }
+    });
   }
 
   /**
@@ -106,7 +153,23 @@ export class RankingScene extends Phaser.Scene {
     const inicioY = 350;
     const espacamento = 60;
 
-    if (ranking.length === 0) {
+    // Limpa elementos antigos de ranking antes de desenhar (evita duplicação)
+    // Observação: se você tiver um container específico para o ranking, limpe-o em vez de tudo.
+    // Aqui fazemos uma limpeza simples procurando textos que contenham '°' ou nomes/pontos.
+    // Para simplicidade e segurança, vamos destruir todos os children criados após a posição do título 'RANKING'.
+    // Se preferir controle mais fino, adapte conforme sua estrutura de cena.
+    // (Não destruímos botões UI nem título)
+    this.children.list.forEach((child) => {
+      // tenta identificar objetos de texto que pertencem ao ranking pela posição Y
+      if (child instanceof Phaser.GameObjects.Text) {
+        const ty = (child as Phaser.GameObjects.Text).y;
+        if (ty >= inicioY - 10) {
+          child.destroy();
+        }
+      }
+    });
+
+    if (!ranking || ranking.length === 0) {
       this.add.text(480, inicioY + 140, 'Nenhuma pontuação registrada.\nSeja o primeiro!', {
         fontFamily: 'Arial',
         fontSize: '30px',
