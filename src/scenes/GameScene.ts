@@ -918,8 +918,9 @@ export class GameScene extends Phaser.Scene {
         mostrarErro('O nome deve ter no máximo 16 caracteres.');
         return;
       }
-      if (!/^[A-Za-z0-9 ]+$/.test(nome)) {
-        mostrarErro('Use apenas letras, números e espaços (sem acentos).');
+      // Mesma classe de caracteres aceita pelo banco (Latin-1: A-Z, a-z, acentos, ç, 0-9, espaço).
+      if (!/^[A-Za-zÀ-ÿ0-9 ]+$/.test(nome)) {
+        mostrarErro('Use apenas letras, números e espaços.');
         return;
       }
 
