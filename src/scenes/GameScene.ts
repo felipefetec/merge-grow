@@ -887,14 +887,76 @@ export class GameScene extends Phaser.Scene {
     botaoSalvar.on('pointerover', () => botaoSalvar.setStyle({ color: '#7bed9f' }));
     botaoSalvar.on('pointerout', () => botaoSalvar.setStyle({ color: '#2ed573' }));
 
-    /** Salva pontuação e vai para o ranking */
-    const salvar = () => {
+    // Texto reutilizável para mostrar feedback de erro abaixo do botão SALVAR.
+    // Criado lazy na primeira falha para não poluir a UI quando tudo dá certo.
+    let textoErro: Phaser.GameObjects.Text | undefined;
+    const mostrarErro = (msg: string) => {
+      if (!textoErro) {
+        textoErro = this.add.text(480, 880, '', {
+          fontFamily: 'Arial',
+          fontSize: '22px',
+          color: '#ff6b6b',
+          align: 'center',
+          wordWrap: { width: 700 },
+        }).setOrigin(0.5).setDepth(11);
+      }
+      textoErro.setText(msg);
+    };
+
+    /**
+     * Salva pontuação no Supabase via RPC e navega para o ranking.
+     * Trata os códigos de erro retornados pelo `RankingManager` exibindo
+     * mensagens amigáveis em vez de simplesmente travar.
+     */
+    const salvar = async () => {
       const nome = inputHTML.value.trim();
       if (nome.length === 0) return;
+
+      // Validação client-side rápida (espelha as constraints do banco) — evita
+      // ida desnecessária à rede e dá feedback imediato ao jogador.
+      if (nome.length > 16) {
+        mostrarErro('O nome deve ter no máximo 16 caracteres.');
+        return;
+      }
+      if (!/^[A-Za-z0-9 ]+$/.test(nome)) {
+        mostrarErro('Use apenas letras, números e espaços (sem acentos).');
+        return;
+      }
+
       soundManager.tocarClick();
+      botaoSalvar.disableInteractive();
+
+      const erro = await RankingManager.salvarPontuacao(nome, this.score);
+
+      if (erro !== null) {
+        // Reabilita o botão e mostra mensagem específica para cada caso.
+        botaoSalvar.setInteractive({ useHandCursor: true });
+        switch (erro) {
+          case 'rate_limit':
+            mostrarErro('Aguarde alguns segundos antes de salvar novamente.');
+            break;
+          case 'nome_invalido':
+          case 'nome_charset_invalido':
+            mostrarErro('Nome inválido. Use até 16 letras/números.');
+            break;
+          case 'pontos_invalidos':
+            mostrarErro('Pontuação inválida.');
+            break;
+          case 'rede':
+            mostrarErro('Sem conexão. Tente novamente.');
+            break;
+          default:
+            mostrarErro('Erro ao salvar. Tente novamente.');
+        }
+        return;
+      }
+
+      // Sucesso: remove input, calcula a posição do jogador no ranking
+      // (procurando por nome+pontos no cache recém-atualizado) e abre o
+      // RankingScene. Se não encontrar, passa -1 (sem celebração de pódio).
       inputHTML.remove();
-      const posicao = RankingManager.salvarPontuacao(nome, this.score);
-      // Passar a posição para a RankingScene via registry
+      const ranking = await RankingManager.carregarRankingAsync(10);
+      const posicao = ranking.findIndex(r => r.nome === nome && r.pontos === this.score);
       this.registry.set('ultimaPosicaoRanking', posicao);
       this.scene.start('RankingScene');
     };

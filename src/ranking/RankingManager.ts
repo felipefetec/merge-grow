@@ -1,17 +1,32 @@
 /**
- * Gerenciador de ranking — salva e carrega pontuações no localStorage.
+ * Gerenciador de ranking — comunica-se com o Supabase via REST.
  *
- * As pontuações são armazenadas como JSON no Supabase
- * com a chave 'merge-grow-ranking'. O ranking mantém no máximo
- * 10 entradas, ordenadas da maior para a menor pontuação.
+ * Inserções de pontuação passam pela RPC `salvar_pontuacao`, que aplica
+ * validação server-side e rate limit por IP. A leitura usa o endpoint
+ * REST padrão da tabela `ranking_mergegrow`.
+ *
+ * Mantém um cache local em memória (top N) e despacha o evento global
+ * `rankingUpdated` (CustomEvent) sempre que esse cache muda, para que
+ * cenas Phaser possam reagir sem polling.
  */
 
+// Liga/desliga logs de debug. Em produção deve ficar `false` para não
+// poluir o console do jogador nem expor estrutura interna do módulo.
+const DEBUG = false;
+function log(...args: unknown[]): void {
+  if (DEBUG) console.log('[RankingManager]', ...args);
+}
 
-// src/ranking/RankingManager.ts
-// Classe de gerenciamento de ranking usando REST API do Supabase (sem depender do pacote @supabase/supabase-js)
-// - Logs para debug
-// - Atualiza cache ao carregar
-// - Despacha evento global 'rankingUpdated' quando o cache muda
+// Tipos de erro que a RPC `salvar_pontuacao` pode lançar (raise exception).
+// São strings simples porque o PostgREST devolve a mensagem do `raise` no
+// campo `message` do JSON de erro.
+export type RankingErroSalvar =
+  | 'rate_limit'
+  | 'nome_invalido'
+  | 'nome_charset_invalido'
+  | 'pontos_invalidos'
+  | 'rede'
+  | 'desconhecido';
 
 export interface RankingEntry {
   id?: number;
@@ -21,18 +36,30 @@ export interface RankingEntry {
 }
 
 export class RankingManager {
-  // Configuração do Supabase (substitua por variáveis de ambiente se preferir)
+  // Configuração do Supabase. A `anon key` é pública por design — a segurança
+  // real é garantida pelas RLS policies + RPC `security definer` no banco.
   private static readonly BASE_URL = 'https://fyibtitbyvexsyrwpcsf.supabase.co';
   private static readonly ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWJ0aXRieXZleHN5cndwY3NmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MzA1NjcsImV4cCI6MjA5MTAwNjU2N30.4Bln3xJDLGJ-A1LnpbgCVVZ9jcnncSTRzw1hLIFH2_o';
   private static readonly TABELA = 'ranking_mergegrow';
+  private static readonly RPC_SALVAR = 'salvar_pontuacao';
 
-  // Cache local para compatibilidade síncrona
+  // Timeout padrão das chamadas HTTP — evita Promises penduradas se a rede travar.
+  private static readonly TIMEOUT_MS = 8000;
+
+  // Cache local com a última leitura conhecida do servidor.
   private static cache: RankingEntry[] = [];
 
-  // Lista de callbacks registrados (opcional)
+  // Listeners locais (callbacks) registrados via `subscribe`.
   private static listeners: Array<(ranking: RankingEntry[]) => void> = [];
 
-  // Cabeçalhos padrão para chamadas REST ao Supabase
+  // Promise da requisição de leitura em andamento (deduplicação): se duas
+  // cenas pedirem o ranking ao mesmo tempo, ambas reaproveitam o mesmo fetch.
+  private static fetchEmAndamento: Promise<void> | null = null;
+
+  /**
+   * Cabeçalhos padrão para chamadas REST ao Supabase.
+   * A `apikey` e o `Authorization` recebem a mesma `anon key`.
+   */
   private static getHeaders(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
@@ -42,133 +69,163 @@ export class RankingManager {
   }
 
   /**
-   * Inicialização automática: dispara uma primeira atualização do cache em background.
-   * Chamado ao importar o módulo (executa uma vez).
+   * Wrapper de `fetch` com timeout via AbortController.
+   * Lança erro `'rede'` em caso de timeout ou falha de conexão.
    */
-  private static _initialized = (() => {
-    // não await aqui, apenas dispara em background
-    RankingManager.fetchAndUpdateCache(10).catch(err => {
-      console.error('[RankingManager] inicialização falhou:', err);
-    });
-    return true;
-  })();
+  private static async fetchComTimeout(input: string, init: RequestInit = {}): Promise<Response> {
+    const ctrl = new AbortController();
+    const tid = setTimeout(() => ctrl.abort(), RankingManager.TIMEOUT_MS);
+    try {
+      return await fetch(input, { ...init, signal: ctrl.signal });
+    } finally {
+      clearTimeout(tid);
+    }
+  }
 
   /**
-   * Salva uma pontuação no ranking global (Supabase) via REST.
+   * Type guard simples para validar objetos vindos da API.
+   * Como dados externos não são confiáveis, validamos antes de inserir no cache.
    */
-  static async salvarPontuacao(nome: string, pontos: number): Promise<void> {
+  private static isRankingEntryLike(row: unknown): row is { id: number; nome: string; pontos: number; created_at?: string } {
+    if (!row || typeof row !== 'object') return false;
+    const r = row as Record<string, unknown>;
+    return (
+      (typeof r.id === 'number' || typeof r.id === 'bigint') &&
+      typeof r.nome === 'string' &&
+      (typeof r.pontos === 'number' || typeof r.pontos === 'string')
+    );
+  }
+
+  /**
+   * Salva uma pontuação chamando a RPC `salvar_pontuacao` no Supabase.
+   * A validação acontece no banco — aqui só repassamos os dados.
+   *
+   * Retorna `null` em caso de sucesso ou um código de erro estruturado para
+   * que a UI possa exibir uma mensagem amigável (ex.: "aguarde 5 segundos").
+   */
+  static async salvarPontuacao(nome: string, pontos: number): Promise<RankingErroSalvar | null> {
     try {
-      console.log('[RankingManager] salvarPontuacao', { nome, pontos });
+      log('salvarPontuacao', { nome, pontos });
 
-      const url = `${RankingManager.BASE_URL}/rest/v1/${RankingManager.TABELA}`;
-      const body = JSON.stringify([{ nome, pontos }]);
+      const url = `${RankingManager.BASE_URL}/rest/v1/rpc/${RankingManager.RPC_SALVAR}`;
+      const body = JSON.stringify({ p_nome: nome, p_pontos: pontos });
 
-      const res = await fetch(url, {
+      const res = await RankingManager.fetchComTimeout(url, {
         method: 'POST',
-        headers: {
-          ...RankingManager.getHeaders(),
-          Prefer: 'return=representation',
-        },
+        headers: RankingManager.getHeaders(),
         body,
       });
 
-      console.log('[RankingManager] POST status:', res.status);
+      log('RPC status:', res.status);
 
       if (!res.ok) {
-        const text = await res.text();
-        console.error('[RankingManager] Erro ao salvar pontuação (HTTP):', res.status, text);
-        return;
-      }
-
-      // tenta ler a representação retornada
-      try {
-        const data = await res.json();
-        console.log('[RankingManager] POST response body:', data);
-
-        if (Array.isArray(data) && data.length > 0) {
-          // adiciona ao cache e reordena
-          RankingManager.cache.push({
-            id: data[0].id,
-            nome: data[0].nome,
-            pontos: Number(data[0].pontos),
-            created_at: data[0].created_at,
-          });
-          RankingManager.cache.sort((a, b) => b.pontos - a.pontos);
-          RankingManager.cache = RankingManager.cache.slice(0, 100);
-          RankingManager.notifyUpdate();
-          return;
+        // PostgREST devolve { message, code, ... } quando o `raise exception` dispara.
+        // O texto do `raise` cai no campo `message`.
+        let codigo: RankingErroSalvar = 'desconhecido';
+        try {
+          const errJson = await res.json();
+          const msg = String(errJson?.message ?? '');
+          if (msg.includes('rate_limit')) codigo = 'rate_limit';
+          else if (msg.includes('nome_charset_invalido')) codigo = 'nome_charset_invalido';
+          else if (msg.includes('nome_invalido')) codigo = 'nome_invalido';
+          else if (msg.includes('pontos_invalidos')) codigo = 'pontos_invalidos';
+          console.error('[RankingManager] RPC erro:', res.status, errJson);
+        } catch {
+          console.error('[RankingManager] RPC erro (sem corpo JSON):', res.status);
         }
-      } catch (err) {
-        console.warn('[RankingManager] Não foi possível parsear POST response, recarregando cache', err);
+        return codigo;
       }
 
-      // fallback: recarrega cache completo
-      await RankingManager.fetchAndUpdateCache(10);
-    } catch (err) {
-      console.error('[RankingManager] Falha inesperada ao salvar pontuação:', err);
-    }
-  }
-
-  /**
-   * Busca os dados do Supabase e atualiza o cache interno.
-   */
-  private static async fetchAndUpdateCache(limit: number = 10): Promise<void> {
-    try {
-      const url = new URL(`${RankingManager.BASE_URL}/rest/v1/${RankingManager.TABELA}`);
-      url.searchParams.set('select', '*');
-      url.searchParams.set('order', 'pontos.desc');
-      url.searchParams.set('limit', String(limit));
-
-      console.log('[RankingManager] fetch url:', url.toString());
-
-      const res = await fetch(url.toString(), {
-        method: 'GET',
-        headers: RankingManager.getHeaders(),
+      // Sucesso: a RPC retorna o registro inserido como JSON.
+      // Recarrega o cache em background para refletir a nova posição.
+      RankingManager.fetchAndUpdateCache(10).catch(err => {
+        console.error('[RankingManager] Erro ao recarregar após salvar:', err);
       });
 
-      console.log('[RankingManager] fetch status:', res.status);
-
-      if (!res.ok) {
-        const text = await res.text();
-        console.error('[RankingManager] Erro ao carregar ranking (HTTP):', res.status, text);
-        return;
-      }
-
-      const data = await res.json();
-      console.log('[RankingManager] fetch raw result:', data);
-
-      if (Array.isArray(data)) {
-        RankingManager.cache = data.map((row: any) => ({
-          id: row.id,
-          nome: row.nome,
-          pontos: Number(row.pontos),
-          created_at: row.created_at,
-        })) as RankingEntry[];
-
-        console.log('[RankingManager] cache atualizado:', RankingManager.cache);
-        RankingManager.notifyUpdate();
-      } else {
-        console.error('[RankingManager] Resposta inesperada ao carregar ranking:', data);
-      }
+      return null;
     } catch (err) {
-      console.error('[RankingManager] Falha inesperada ao buscar ranking:', err);
+      // AbortError (timeout) ou erro de rede caem aqui.
+      console.error('[RankingManager] Falha ao salvar pontuação:', err);
+      return 'rede';
     }
   }
 
   /**
-   * Retorna imediatamente o cache atual (síncrono) e dispara uma atualização em background.
+   * Busca o ranking no Supabase e substitui o cache.
+   * Deduplica chamadas concorrentes: se já houver uma busca em andamento,
+   * a segunda chamada espera o mesmo Promise em vez de disparar outro fetch.
+   */
+  private static fetchAndUpdateCache(limit: number = 10): Promise<void> {
+    if (RankingManager.fetchEmAndamento) {
+      return RankingManager.fetchEmAndamento;
+    }
+
+    const promessa = (async () => {
+      try {
+        const url = new URL(`${RankingManager.BASE_URL}/rest/v1/${RankingManager.TABELA}`);
+        url.searchParams.set('select', '*');
+        url.searchParams.set('order', 'pontos.desc');
+        url.searchParams.set('limit', String(limit));
+
+        log('fetch url:', url.toString());
+
+        const res = await RankingManager.fetchComTimeout(url.toString(), {
+          method: 'GET',
+          headers: RankingManager.getHeaders(),
+        });
+
+        log('fetch status:', res.status);
+
+        if (!res.ok) {
+          const text = await res.text();
+          console.error('[RankingManager] Erro ao carregar ranking (HTTP):', res.status, text);
+          return;
+        }
+
+        const data = await res.json();
+
+        if (!Array.isArray(data)) {
+          console.error('[RankingManager] Resposta inesperada ao carregar ranking:', data);
+          return;
+        }
+
+        // Filtra pelo type guard — qualquer linha malformada é descartada
+        // em vez de explodir o cache inteiro.
+        RankingManager.cache = data
+          .filter(RankingManager.isRankingEntryLike)
+          .map((row) => ({
+            id: Number(row.id),
+            nome: row.nome,
+            pontos: Number(row.pontos),
+            created_at: row.created_at,
+          }));
+
+        log('cache atualizado:', RankingManager.cache);
+        RankingManager.notifyUpdate();
+      } catch (err) {
+        console.error('[RankingManager] Falha inesperada ao buscar ranking:', err);
+      } finally {
+        RankingManager.fetchEmAndamento = null;
+      }
+    })();
+
+    RankingManager.fetchEmAndamento = promessa;
+    return promessa;
+  }
+
+  /**
+   * Retorna imediatamente o cache atual (síncrono) e dispara uma atualização
+   * em background. Útil para renderização inicial sem `await`.
    */
   static carregarRanking(limit: number = 10): RankingEntry[] {
-    // dispara atualização em background
     RankingManager.fetchAndUpdateCache(limit).catch(err => {
       console.error('[RankingManager] Erro ao atualizar cache em background:', err);
     });
-
     return RankingManager.cache;
   }
 
   /**
-   * Versão assíncrona que garante que os dados foram carregados antes de retornar.
+   * Versão assíncrona — aguarda o fetch concluir antes de retornar o cache.
    */
   static async carregarRankingAsync(limit: number = 10): Promise<RankingEntry[]> {
     await RankingManager.fetchAndUpdateCache(limit);
@@ -176,7 +233,8 @@ export class RankingManager {
   }
 
   /**
-   * Atualiza a UI chamando a função de renderização que você já tem.
+   * Helper para renderização: chama `renderFn` com o ranking carregado,
+   * com fallback para o cache atual em caso de erro.
    */
   static async atualizarRankingUI(renderFn: (ranking: RankingEntry[]) => void, limit: number = 10) {
     try {
@@ -193,12 +251,11 @@ export class RankingManager {
   }
 
   /**
-   * Registra um listener local (callback) que será chamado sempre que o cache for atualizado.
-   * Retorna uma função para remover o listener.
+   * Registra um listener local que será chamado quando o cache for atualizado.
+   * Retorna a função de unsubscribe.
    */
   static subscribe(callback: (ranking: RankingEntry[]) => void): () => void {
     RankingManager.listeners.push(callback);
-    // chama imediatamente com o cache atual
     try {
       callback(RankingManager.cache);
     } catch (e) {
@@ -210,30 +267,23 @@ export class RankingManager {
   }
 
   /**
-   * Notifica listeners locais e despacha evento global 'rankingUpdated' com os dados.
+   * Notifica listeners locais e despacha o evento global `rankingUpdated`.
    */
   private static notifyUpdate() {
-    try {
-      // notifica callbacks registrados
-      for (const cb of RankingManager.listeners) {
-        try {
-          cb(RankingManager.cache);
-        } catch (e) {
-          console.error('[RankingManager] Erro em listener registrado:', e);
-        }
-      }
-
-      // despacha evento global para que cenas possam escutar
+    for (const cb of RankingManager.listeners) {
       try {
-        const event = new CustomEvent('rankingUpdated', { detail: RankingManager.cache });
-        if (typeof window !== 'undefined' && window.dispatchEvent) {
-          window.dispatchEvent(event);
-        }
+        cb(RankingManager.cache);
+      } catch (e) {
+        console.error('[RankingManager] Erro em listener registrado:', e);
+      }
+    }
+
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      try {
+        window.dispatchEvent(new CustomEvent('rankingUpdated', { detail: RankingManager.cache }));
       } catch (e) {
         console.error('[RankingManager] Erro ao despachar evento rankingUpdated:', e);
       }
-    } catch (err) {
-      console.error('[RankingManager] notifyUpdate falhou:', err);
     }
   }
 }

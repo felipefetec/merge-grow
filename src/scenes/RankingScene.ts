@@ -17,6 +17,12 @@ export class RankingScene extends Phaser.Scene {
   // Array para armazenar apenas os objetos do ranking (para limpar sem afetar UI)
   private rankingObjects: Phaser.GameObjects.GameObject[] = [];
 
+  // Referência ao listener do evento global `rankingUpdated`. Guardada em
+  // campo da instância para que possamos remover EXATAMENTE a mesma função
+  // no shutdown — evita vazamento a cada `scene.restart()` (ex.: ao trocar
+  // de tema), que antes registrava um listener novo sem limpar o anterior.
+  private onRankingUpdate?: (ev: Event) => void;
+
   constructor() {
     super({ key: 'RankingScene' });
   }
@@ -73,27 +79,29 @@ export class RankingScene extends Phaser.Scene {
    * para atualizações futuras (evento global 'rankingUpdated').
    */
   private iniciarCarregamentoRanking(): void {
-    // 1) Carrega inicialmente aguardando a resposta
+    // 1) Carrega inicialmente aguardando a resposta. Em caso de falha,
+    //    mostramos o cache se houver, ou uma mensagem de "ranking offline".
     RankingManager.carregarRankingAsync(10)
       .then((ranking) => {
-        console.log('[RankingScene] carregarRankingAsync result:', ranking);
         this.exibirRanking(ranking);
       })
       .catch((err) => {
         console.error('[RankingScene] Erro carregarRankingAsync:', err);
-        // fallback: renderiza cache atual (pode estar vazio)
-        try {
-          this.exibirRanking(RankingManager.carregarRanking());
-        } catch (e) {
-          console.error('[RankingScene] Erro no fallback exibirRanking:', e);
+        const cache = RankingManager.carregarRanking();
+        if (cache && cache.length > 0) {
+          this.exibirRanking(cache);
+        } else {
+          this.exibirMensagemErro();
         }
       });
 
-    // 2) Registra listener para atualizações futuras (evento global)
-    const onUpdate = (ev: Event) => {
+    // 2) Registra listener para atualizações futuras (evento global).
+    //    Guardamos em campo da instância para remover a MESMA referência
+    //    no shutdown — sem isso, cada `scene.restart()` deixava um
+    //    listener vivo no `window` para sempre.
+    this.onRankingUpdate = (ev: Event) => {
       try {
         const detail = (ev as CustomEvent).detail as RankingEntry[];
-        console.log('[RankingScene] rankingUpdated event recebido:', detail);
         this.exibirRanking(detail);
       } catch (e) {
         console.error('[RankingScene] Erro ao processar rankingUpdated event:', e);
@@ -101,15 +109,31 @@ export class RankingScene extends Phaser.Scene {
     };
 
     if (typeof window !== 'undefined' && window.addEventListener) {
-      window.addEventListener('rankingUpdated', onUpdate as EventListener);
+      window.addEventListener('rankingUpdated', this.onRankingUpdate as EventListener);
     }
 
-    // Remove listener quando a cena for destruída
-    this.events.on('shutdown', () => {
-      if (typeof window !== 'undefined' && window.removeEventListener) {
-        window.removeEventListener('rankingUpdated', onUpdate as EventListener);
+    // Remove listener quando a cena for destruída ou reiniciada.
+    this.events.once('shutdown', () => {
+      if (this.onRankingUpdate && typeof window !== 'undefined' && window.removeEventListener) {
+        window.removeEventListener('rankingUpdated', this.onRankingUpdate as EventListener);
       }
+      this.onRankingUpdate = undefined;
     });
+  }
+
+  /**
+   * Mostra uma mensagem visual quando o ranking falha ao carregar e
+   * não há cache local para exibir como fallback.
+   */
+  private exibirMensagemErro(): void {
+    const c = themeManager.cores;
+    const msg = this.add.text(480, 490, 'Não foi possível carregar o ranking.\nVerifique sua conexão.', {
+      fontFamily: 'Arial',
+      fontSize: '26px',
+      color: c.textTertiary,
+      align: 'center',
+    }).setOrigin(0.5);
+    this.rankingObjects.push(msg);
   }
 
   /**
