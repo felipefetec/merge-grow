@@ -25,6 +25,7 @@ export type RankingErroSalvar =
   | 'nome_invalido'
   | 'nome_charset_invalido'
   | 'pontos_invalidos'
+  | 'sessao_invalida'   // token ausente, já usado ou sessão muito curta/expirada
   | 'rede'
   | 'desconhecido';
 
@@ -42,6 +43,7 @@ export class RankingManager {
   private static readonly ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZ5aWJ0aXRieXZleHN5cndwY3NmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU0MzA1NjcsImV4cCI6MjA5MTAwNjU2N30.4Bln3xJDLGJ-A1LnpbgCVVZ9jcnncSTRzw1hLIFH2_o';
   private static readonly TABELA = 'ranking_mergegrow';
   private static readonly RPC_SALVAR = 'salvar_pontuacao';
+  private static readonly RPC_SESSAO = 'iniciar_sessao';
 
   // Timeout padrão das chamadas HTTP — evita Promises penduradas se a rede travar.
   private static readonly TIMEOUT_MS = 8000;
@@ -97,18 +99,59 @@ export class RankingManager {
   }
 
   /**
+   * Inicia uma sessão de jogo no banco — deve ser chamado assim que a
+   * cena do jogo carregar. Retorna um UUID que representa esta partida.
+   *
+   * O token é gerado pelo banco (gen_random_uuid), portanto não pode ser
+   * forjado pelo cliente. Ele será exigido na hora de salvar a pontuação
+   * e só é aceito se a sessão tiver pelo menos 20 segundos de vida
+   * (tempo mínimo de uma partida real) e menos de 30 minutos.
+   *
+   * Retorna `null` em caso de falha de rede — o jogo ainda funciona,
+   * mas o jogador não conseguirá salvar o score ao final.
+   */
+  static async iniciarSessao(): Promise<string | null> {
+    try {
+      log('iniciarSessao');
+
+      const url = `${RankingManager.BASE_URL}/rest/v1/rpc/${RankingManager.RPC_SESSAO}`;
+      const res = await RankingManager.fetchComTimeout(url, {
+        method: 'POST',
+        headers: RankingManager.getHeaders(),
+        body: '{}', // RPC sem parâmetros exige body vazio mas válido
+      });
+
+      if (!res.ok) {
+        console.error('[RankingManager] Falha ao iniciar sessão:', res.status);
+        return null;
+      }
+
+      const data = await res.json();
+      const token = data?.token ?? null;
+      log('sessão iniciada:', token);
+      return token;
+    } catch (err) {
+      console.error('[RankingManager] Erro ao iniciar sessão:', err);
+      return null;
+    }
+  }
+
+  /**
    * Salva uma pontuação chamando a RPC `salvar_pontuacao` no Supabase.
-   * A validação acontece no banco — aqui só repassamos os dados.
+   * Exige o token gerado por `iniciarSessao` — sem ele o banco rejeita.
    *
    * Retorna `null` em caso de sucesso ou um código de erro estruturado para
    * que a UI possa exibir uma mensagem amigável (ex.: "aguarde 5 segundos").
    */
-  static async salvarPontuacao(nome: string, pontos: number): Promise<RankingErroSalvar | null> {
+  static async salvarPontuacao(nome: string, pontos: number, token: string | null): Promise<RankingErroSalvar | null> {
     try {
-      log('salvarPontuacao', { nome, pontos });
+      log('salvarPontuacao', { nome, pontos, token });
+
+      // Se não há token (falha ao iniciar sessão), bloqueia na própria chamada
+      if (!token) return 'sessao_invalida';
 
       const url = `${RankingManager.BASE_URL}/rest/v1/rpc/${RankingManager.RPC_SALVAR}`;
-      const body = JSON.stringify({ p_nome: nome, p_pontos: pontos });
+      const body = JSON.stringify({ p_nome: nome, p_pontos: pontos, p_token: token });
 
       const res = await RankingManager.fetchComTimeout(url, {
         method: 'POST',
@@ -129,6 +172,7 @@ export class RankingManager {
           else if (msg.includes('nome_charset_invalido')) codigo = 'nome_charset_invalido';
           else if (msg.includes('nome_invalido')) codigo = 'nome_invalido';
           else if (msg.includes('pontos_invalidos')) codigo = 'pontos_invalidos';
+          else if (msg.includes('sessao_invalida')) codigo = 'sessao_invalida';
           console.error('[RankingManager] RPC erro:', res.status, errJson);
         } catch {
           console.error('[RankingManager] RPC erro (sem corpo JSON):', res.status);

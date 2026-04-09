@@ -57,6 +57,13 @@ export class GameScene extends Phaser.Scene {
   /** Timestamps das uniões recentes — usado para detectar combos */
   private mergesRecentes: number[] = [];
 
+  /**
+   * Token UUID gerado pelo banco ao iniciar a partida.
+   * É exigido ao salvar a pontuação — garante que o score
+   * veio de uma sessão real e não de uma chamada direta à API.
+   */
+  private sessionToken: string | null = null;
+
   /** Janela de tempo para contar combos (1 segundo) */
   private static readonly COMBO_JANELA_MS = 1000;
 
@@ -90,9 +97,17 @@ export class GameScene extends Phaser.Scene {
     this.canDrop = false;
     this.isGameOver = false;
     this.ponteiroPressionado = false;
+    this.sessionToken = null;
     this.fruitBodies.clear();
     this.mergingBodies.clear();
     this.mergesRecentes = [];
+
+    // Inicia a sessão no banco assim que o jogo carrega.
+    // O token é armazenado e enviado ao salvar o score no fim da partida.
+    // Se falhar (sem rede), o jogador ainda joga — só não consegue salvar.
+    RankingManager.iniciarSessao().then(token => {
+      this.sessionToken = token;
+    });
 
     this.criarContainer();
     this.criarLinhaPerigo();
@@ -927,7 +942,7 @@ export class GameScene extends Phaser.Scene {
       soundManager.tocarClick();
       botaoSalvar.disableInteractive();
 
-      const erro = await RankingManager.salvarPontuacao(nome, this.score);
+      const erro = await RankingManager.salvarPontuacao(nome, this.score, this.sessionToken);
 
       if (erro !== null) {
         // Reabilita o botão e mostra mensagem específica para cada caso.
@@ -942,6 +957,9 @@ export class GameScene extends Phaser.Scene {
             break;
           case 'pontos_invalidos':
             mostrarErro('Pontuação inválida.');
+            break;
+          case 'sessao_invalida':
+            mostrarErro('Sessão inválida. Reinicie o jogo para salvar.');
             break;
           case 'rede':
             mostrarErro('Sem conexão. Tente novamente.');
